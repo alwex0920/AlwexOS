@@ -10,6 +10,7 @@
 - **Educational Focus**: Perfect for learning low-level programming
 - **Built-in Language**: AlwexScript for system programming
 - **Lightweight**: Minimal dependencies, maximum performance
+- **File System**: In this OS, all created files are stored in RAM, which makes it possible not to look at the code written, for example, by another student or student, and not to rewrite it, but to come to a solution to the problem yourself.
 
 ## 🚀 Quick Start
 
