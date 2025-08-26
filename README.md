@@ -26,6 +26,8 @@
 - PARTED
 - SFDISK
 - GNU-EFI
+- QEMU (for emulation)
+- OVMF
 
 ### Build and Run
 ```bash
