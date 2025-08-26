@@ -173,39 +173,24 @@ void ata_init() {
     outb(ATA_DRIVE_SEL, 0xA0);
     uint8_t status = inb(ATA_STATUS);
     
-    print("ATA status: ");
-    print_hex(status);
-    print("\n");
-    
     if (status == 0xFF) {
-        print("No ATA disk detected\n");
         return;
     }
     
     if (!ata_wait()) {
-        print("ATA disk timeout\n");
         return;
     }
 
-    print("Searching for filesystem partition...\n");
     uint32_t fs_lba = find_fs_partition();
     
     if (fs_lba == 0) {
-        print("No filesystem partition found\n");
         return;
     }
 
-    print("Verifying filesystem signature...\n");
     if (!verify_fs_signature(fs_lba)) {
-        print("Invalid filesystem signature\n");
         return;
     }
     
     char debug_msg[50];
     itoa(fs_lba, debug_msg, 10);
-    print("Found valid partition at LBA: ");
-    print(debug_msg);
-    print("\n");
-
-    print("ATA disk and filesystem initialized\n");
 }
