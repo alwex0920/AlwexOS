@@ -22,7 +22,7 @@ void kmain(boot_info_t* boot_info) {
         print("Error: No filesystem partition found\n");
         fs_init_ramdisk();
     } else {
-        fs_init(fs_lba);  // Передаем LBA раздела
+        fs_init(fs_lba);
     }    
     shell_main();
     while (1) {
