@@ -1,7 +1,8 @@
 #include "include/fs.h"
 #include "include/lib.h"
-#include "include/ata.h"
+#include "include/ahci.h"
 #include "include/stddef.h"
+#include "include/mm.h"
 
 #define MAX_NODES 64
 static fs_node node_pool[MAX_NODES];
@@ -14,6 +15,87 @@ static char current_path[MAX_PATH_LEN] = "/";
 #define FS_SIGNATURE 0x4F53574C
 
 static uint32_t fs_start_sector = 0;
+
+static uint8_t* ramdisk = NULL;
+static size_t ramdisk_size = 2 * 1024 * 1024; // 2 МБ
+
+int use_ahci = 0;
+int use_ramdisk = 0;
+
+#ifndef SUPERBLOCK_DEFINED
+#define SUPERBLOCK_DEFINED
+typedef struct {
+    uint32_t magic;
+    uint32_t block_size;
+    uint32_t total_blocks;
+    uint32_t free_blocks;
+} superblock_t;
+#endif
+
+#define FS_MAGIC 0x4C57534F  // "LWSO"
+
+void fs_init_ramdisk() {
+    use_ahci = 0;
+    use_ramdisk = 1;
+    
+    print("Initializing RAM disk...\n");
+
+    ramdisk = (uint8_t*)kmalloc(ramdisk_size);
+    if (!ramdisk) {
+        print("Error: Failed to allocate RAM disk\n");
+        return;
+    }
+
+    memset(ramdisk, 0, ramdisk_size);
+
+    superblock_t* sb = (superblock_t*)ramdisk;
+    sb->magic = FS_MAGIC;
+    sb->block_size = 512;
+    sb->total_blocks = ramdisk_size / sb->block_size;
+    sb->free_blocks = sb->total_blocks - 1;
+    
+    print("RAM disk initialized: ");
+    print_hex(ramdisk_size);
+    print(" bytes\n");
+}
+
+static int ramdisk_read_sectors(uint32_t lba, uint32_t count, void* buffer) {
+    if (!ramdisk || lba * 512 + count * 512 > ramdisk_size) {
+        return 0;
+    }
+    
+    memcpy(buffer, ramdisk + lba * 512, count * 512);
+    return 1;
+}
+
+static int ramdisk_write_sectors(uint32_t lba, uint32_t count, void* buffer) {
+    if (!ramdisk || lba * 512 + count * 512 > ramdisk_size) {
+        return 0;
+    }
+    
+    memcpy(ramdisk + lba * 512, buffer, count * 512);
+    return 1;
+}
+
+int read_sectors(uint32_t lba, uint32_t count, void* buffer) {
+    if (use_ahci) {
+        return ahci_read_sectors(lba, count, buffer);
+    } else if (use_ramdisk) {
+        return ramdisk_read_sectors(lba, count, buffer);
+    }
+    
+    return 0;
+}
+
+int write_sectors(uint32_t lba, uint32_t count, void* buffer) {
+    if (use_ahci) {
+        return ahci_write_sectors(lba, count, buffer);
+    } else if (use_ramdisk) {
+        return ramdisk_write_sectors(lba, count, buffer);
+    }
+    
+    return 0;
+}
 
 void fs_set_start_sector(uint32_t sector) {
     fs_start_sector = sector;
@@ -100,7 +182,12 @@ const char *getcwd(void) {
     return current_path;
 }
 
-void fs_init() {
+void fs_init(uint32_t lba) {
+    print("Initializing filesystem at LBA: ");
+    print_hex(lba);
+    print("\n");
+    use_ahci = 1;
+    use_ramdisk = 0;
     fs_load();
 
     if (node_count == 0) {
@@ -130,7 +217,7 @@ void fs_save(void) {
     *(uint32_t*)(buffer) = FS_SIGNATURE;
     *(uint32_t*)(buffer + 4) = node_count;
 
-    ata_write_sectors(0, 1, buffer);
+    write_sectors(0, 1, buffer);
 
     for (int i = 0; i < node_count; i++) {
         memset(buffer, 0, sizeof(buffer));
@@ -149,7 +236,7 @@ void fs_save(void) {
 
         memcpy(buffer, &node_copy, sizeof(fs_node));
 
-        ata_write_sectors(1 + i, 1, buffer);
+        ahci_write_sectors(1 + i, 1, buffer);
     }
 }
 
@@ -213,7 +300,7 @@ void fs_load(void) {
     uint8_t buffer[512];
 
     uint32_t fs_start = find_fs_partition();
-    ata_read_sectors(fs_start, 1, buffer);
+    read_sectors(fs_start, 1, buffer);
 
     if (*(uint32_t*)buffer != FS_SIGNATURE) {
         print("No valid FS found. Creating new.\n");
@@ -230,7 +317,7 @@ void fs_load(void) {
     }
 
     for (int i = 0; i < node_count; i++) {
-        ata_read_sectors(1 + i, 1, buffer);
+        read_sectors(1 + i, 1, buffer);
         memcpy(&node_pool[i], buffer, sizeof(fs_node));
     }
 
