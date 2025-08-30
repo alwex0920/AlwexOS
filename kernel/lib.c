@@ -691,32 +691,32 @@ int safe_readline(char *buf, int size) {
     return i;
 }
 
-void *memcpy(void *dest, const void *src, size_t n) {
+void* memcpy(void* dest, const void* src, size_t n) {
     if (!dest || !src) return NULL;
     
-    char *d = dest;
-    const char *s = src;
+    char* d = dest;
+    const char* s = src;
     while (n--) {
         *d++ = *s++;
     }
     return dest;
 }
 
-void *memset(void *ptr, int value, size_t num) {
+void* memset(void* ptr, int value, size_t num) {
     if (!ptr) return NULL;
     
-    unsigned char *p = ptr;
+    unsigned char* p = ptr;
     while (num--) {
         *p++ = (unsigned char)value;
     }
     return ptr;
 }
 
-void *memmove(void *dest, const void *src, size_t n) {
+void* memmove(void* dest, const void* src, size_t n) {
     if (!dest || !src) return NULL;
     
-    char *d = dest;
-    const char *s = src;
+    char* d = dest;
+    const char* s = src;
     
     if (d < s) {
         while (n--) {
@@ -798,8 +798,6 @@ void reboot() {
 
     outb(0xCF9, 0x02);
     outb(0xCF9, 0x06);
-
-    asm volatile ("int $0x08");
 
     print("Now the computer power can be turned off via the button\n");
     
