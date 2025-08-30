@@ -10,7 +10,27 @@
 - **Educational Focus**: Perfect for learning low-level programming
 - **Built-in Language**: AlwexScript for system programming
 - **Lightweight**: Minimal dependencies, maximum performance
-- **File System**: In this OS, all created files are stored in RAM, which makes it possible not to look at the code written, for example, by another student or student, and not to rewrite it, but to come to a solution to the problem yourself.
+- **File System**: This OS first tries to find the disk using AHCI, if it does not find it, it initializes the file system in RAM.
+
+## 💡 Why This Approach Rocks
+## For Students:
+- 🚀 Instant gratification - system works immediately
+
+- 🧠 Learn fundamentals without hardware barriers
+
+## For Developers:
+- 📦 Modular architecture - easy to add real AHCI later
+
+- 🐛 Easier debugging - consistent behavior across hardware
+
+- 🌐 Hardware agnostic - runs anywhere
+
+## For Educators:
+- 👥 Consistent experience - all students see same behavior
+
+- 📚 Controlled environment - perfect for assignments
+
+- ⚡ No setup required - just boot and go
 
 ## 🚀 Quick Start
 
