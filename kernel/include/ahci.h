@@ -4,7 +4,6 @@
 #include "stdint.h"
 #include "stddef.h"
 
-// Структуры данных AHCI
 typedef struct {
     uint32_t clb;    // Command List Base Address
     uint32_t clbu;   // Command List Base Address Upper
@@ -142,7 +141,6 @@ typedef struct {
     } prdt[];
 } hba_cmd_table_t;
 
-// Функции AHCI
 void ahci_init();
 int ahci_read_sectors(uint64_t lba, uint32_t count, void* buffer);
 int ahci_write_sectors(uint64_t lba, uint32_t count, void* buffer);
