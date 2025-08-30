@@ -139,6 +139,9 @@ SECTIONS {
         stack_top = .;
     }
     
+    . = ALIGN(4096);
+    _end = .;
+
     /* Отбрасываем ненужные секции */
     /DISCARD/ : {
         *(.comment)
@@ -216,40 +219,38 @@ dd if=build/bootloader.bin of=build/boot.img conv=notrunc bs=512 count=1 status=
 echo "  Creating data partition with GPT..."
 dd if=/dev/zero of=build/data.img bs=1M count=32 status=none
 
-# Создаем GPT разметку с помощью parted
+# Создаем GPT разметку
 sudo parted build/data.img mklabel gpt
 sudo parted build/data.img mkpart primary fat32 1MiB 100%
 
-# Настраиваем loop-устройство с поддержкой разделов
+# Настраиваем loop-устройство
 LOOP_DEV=$(sudo losetup -f --show -P build/data.img)
-
-# Ждем, чтобы разделы точно появились
 sleep 2
 
-# Проверяем, появился ли раздел
 if [ ! -b "${LOOP_DEV}p1" ]; then
     echo "Error: Partition not found: ${LOOP_DEV}p1"
     sudo losetup -d $LOOP_DEV
     exit 1
 fi
 
-# Форматируем раздел в FAT32 с явной меткой
+# Форматируем раздел в FAT32
 sudo mkfs.fat -F 32 -n "ALWEXDATA" ${LOOP_DEV}p1
 
-# Монтируем и создаем начальную структуру
+# Монтируем и создаем файловую систему
 sudo mkdir -p /mnt/data
 sudo mount ${LOOP_DEV}p1 /mnt/data
 
-# Создаем сигнатуру файловой системы
-echo -n -e '\x4C\x57\x53\x4F\x01\x00\x00\x00' | sudo tee /mnt/data/.fs_signature > /dev/null
+# Создаем структуру файловой системы
+sudo mkdir -p /mnt/data/system
+sudo mkdir -p /mnt/data/users
+sudo mkdir -p /mnt/data/temp
 
-# Проверяем, что сигнатура записалась
-if [ ! -f /mnt/data/.fs_signature ]; then
-    echo "Error: Failed to create filesystem signature"
-    sudo umount /mnt/data
-    sudo losetup -d $LOOP_DEV
-    exit 1
-fi
+# Записываем сигнатуру файловой системы в первый сектор раздела
+# Это поможет ОС идентифицировать раздел
+echo -n -e '\x4C\x57\x53\x4F\x01\x00\x00\x00' | sudo dd of=${LOOP_DEV}p1 bs=512 count=1 conv=notrunc
+
+# Создаем файл с информацией о файловой системе
+echo "AlwexOS Filesystem v1.0" | sudo tee /mnt/data/system/fsinfo.txt > /dev/null
 
 sudo umount /mnt/data
 sudo losetup -d $LOOP_DEV
