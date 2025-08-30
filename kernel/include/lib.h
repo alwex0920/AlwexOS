@@ -40,7 +40,6 @@ static inline uint32_t inl(uint16_t port) {
     return ret;
 }
 
-// Функции для работы с памятью
 static inline void io_wait(void) {
     outb(0x80, 0);
 }
