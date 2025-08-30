@@ -10,6 +10,9 @@
 #define MAX_FILE_SIZE 256
 #define MAX_PATH_LEN 128
 
+extern int use_ahci;
+extern int use_ramdisk;
+
 typedef enum {
     FS_FILE_TYPE,
     FS_DIR_TYPE
@@ -29,7 +32,8 @@ typedef struct fs_node {
 
 extern fs_node *current_dir;
 
-void fs_init(void);
+void fs_init(uint32_t lba);
+void fs_init_ramdisk(void);
 void fs_save(void);
 void fs_load(void);
 void print_tree(fs_node* node, int depth);
