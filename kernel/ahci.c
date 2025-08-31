@@ -5,6 +5,7 @@
 
 #define AHCI_CLASS 0x01
 #define AHCI_SUBCLASS 0x06
+#define AHCI_DEBUG 1
 
 static hba_mem_t* hba = NULL;
 static uint32_t abar = 0;
@@ -18,17 +19,45 @@ static int find_ahci_controller() {
                 uint32_t id = pci_read_dword(bus, slot, func, 0);
                 if (id == 0xFFFFFFFF) continue;
                 
+                uint16_t vendor = id & 0xFFFF;
+                uint16_t device = (id >> 16) & 0xFFFF;
+                
                 uint32_t class_code = pci_read_dword(bus, slot, func, 0x08);
                 uint8_t class = (class_code >> 24) & 0xFF;
                 uint8_t subclass = (class_code >> 16) & 0xFF;
+                uint8_t prog_if = (class_code >> 8) & 0xFF;
                 
+                print("PCI: ");
+                print_hex(bus); print(":");
+                print_hex(slot); print(":");
+                print_hex(func); print(" - Vendor:");
+                print_hex(vendor); print(" Device:");
+                print_hex(device); print(" Class:");
+                print_hex(class); print(" Subclass:");
+                print_hex(subclass); print(" ProgIF:");
+                print_hex(prog_if); print("\n");
+
                 if (class == AHCI_CLASS && subclass == AHCI_SUBCLASS) {
+                    print("AHCI controller found at ");
+                    print_hex(bus); print(":");
+                    print_hex(slot); print(":");
+                    print_hex(func); print("\n");
+
                     abar = pci_read_dword(bus, slot, func, 0x24);
                     abar &= ~0xF;
+
+                    print("ABAR: ");
+                    print_hex(abar);
+                    print("\n");
 
                     uint32_t command = pci_read_dword(bus, slot, func, 0x04);
                     command |= (1 << 2) | (1 << 1);
                     pci_write_dword(bus, slot, func, 0x04, command);
+
+                    if (abar == 0 || abar == 0xFFFFFFFF) {
+                        print("Error: Invalid ABAR\n");
+                        continue;
+                    }
                     
                     return 1;
                 }
@@ -43,18 +72,84 @@ static int check_port_type(hba_port_t* port) {
     uint8_t ipm = (ssts >> 8) & 0x0F;
     uint8_t det = ssts & 0x0F;
     
-    if (det != 3 || ipm != 1) return 0;
+    #if AHCI_DEBUG
+    print("Port SSTS: ");
+    print_hex(ssts);
+    print(" (DET=");
+    print_hex(det);
+    print(", IPM=");
+    print_hex(ipm);
+    print(")\n");
+    #endif
+    
+    if (det != 3 || ipm != 1) {
+        #if AHCI_DEBUG
+        if (det != 0) {
+            print("Port not ready: DET=");
+            print_hex(det);
+            print(", IPM=");
+            print_hex(ipm);
+            print("\n");
+        }
+        #endif
+        return 0;
+    }
+    
+    #if AHCI_DEBUG
+    print("Port signature: ");
+    print_hex(port->sig);
+    print("\n");
+    #endif
     
     switch (port->sig) {
         case 0xEB140101:
-            return 2;
+            return 2; // SATAPI
         case 0x00000101:
-            return 1;
+            return 1; // SATA
         case 0xFFFF0000:
-            return 0;
+            return 0; // No device
         default:
+            print("Unknown port signature: ");
+            print_hex(port->sig);
+            print("\n");
             return 3;
     }
+}
+
+static void port_reset(int port_num) {
+    hba_port_t* port = &hba->ports[port_num];
+
+    uint32_t orig_cmd = port->cmd;
+    uint32_t orig_sctl = port->sctl;
+
+    port->cmd = 0;
+    while (port->cmd & 0x8000);
+
+    port->sctl = 0x01;
+    msleep(500);
+    
+    port->sctl = 0x00;
+    msleep(500);
+
+    port->cmd = orig_cmd;
+    port->sctl = orig_sctl;
+
+    int timeout = 1000000;
+    while (timeout-- > 0) {
+        uint32_t ssts = port->ssts;
+        uint8_t det = ssts & 0xF;
+        uint8_t ipm = (ssts >> 8) & 0xF;
+        
+        if (det == 3 && ipm == 1) {
+            print("Port ");
+            print_hex(port_num);
+            print(" ready\n");
+            return;
+        }
+        io_wait();
+    }
+    
+    print("Port reset timeout\n");
 }
 
 static void port_init(int port_num) {
@@ -116,6 +211,16 @@ int ahci_read_sectors(uint64_t lba, uint32_t count, void* buffer) {
     if (port_count == 0) return 0;
 
     hba_port_t* port = &hba->ports[ports[0]];
+
+    int timeout = 1000000;
+    while ((port->tfd & 0x88) && timeout-- > 0) {
+        io_wait();
+    }
+    
+    if (timeout <= 0) {
+        print("AHCI: Port busy timeout\n");
+        return 0;
+    }
 
     int slot = find_cmd_slot(port);
     if (slot == -1) {
@@ -208,19 +313,44 @@ void ahci_detect_drives() {
     uint32_t pi = hba->pi;
     port_count = 0;
     
+    print("Checking implemented ports: ");
+    print_hex(pi);
+    print("\n");
+    
     for (int i = 0; i < 32; i++) {
         if (pi & (1 << i)) {
+            print("Checking port ");
+            print_hex(i);
+            print("\n");
+
+            port_reset(i);
+            
             int type = check_port_type(&hba->ports[i]);
-            if (type == 1) {
+            if (type > 0) {
                 ports[port_count++] = i;
-                print("AHCI: Found SATA drive at port ");
+                print("AHCI: Found drive at port ");
                 print_hex(i);
+                print(" type: ");
+                if (type == 1) print("SATA");
+                else if (type == 2) print("SATAPI");
+                else print("Unknown");
                 print("\n");
 
                 port_init(i);
             }
         }
     }
+}
+
+int ahci_check_drive_ready(int port_num) {
+    if (port_count == 0 || port_num >= port_count) return 0;
+    
+    hba_port_t* port = &hba->ports[ports[port_num]];
+    uint32_t ssts = port->ssts;
+    uint8_t det = ssts & 0xF;
+    uint8_t ipm = (ssts >> 8) & 0xF;
+    
+    return (det == 3 && ipm == 1);
 }
 
 void ahci_init() {
@@ -237,11 +367,38 @@ void ahci_init() {
 
     hba = (hba_mem_t*)(uintptr_t)abar;
 
+    uint32_t cap = hba->cap;
+    print("CAP: ");
+    print_hex(cap);
+    print("\n");
+
     hba->ghc |= (1 << 31);
 
-    while (!(hba->ghc & (1 << 31)));
+    int timeout = 1000000;
+    while (!(hba->ghc & (1 << 31)) && timeout-- > 0) {
+        io_wait();
+    }
+    
+    if (timeout <= 0) {
+        print("AHCI: Failed to enable controller\n");
+        print("GHC: ");
+        print_hex(hba->ghc);
+        print("\n");
+        return;
+    }
     
     print("AHCI: Controller enabled\n");
+    print("GHC: ");
+    print_hex(hba->ghc);
+    print("\n");
+
+    print("Ports implemented: ");
+    print_hex(hba->pi);
+    print("\n");
+
+    print("Version: ");
+    print_hex(hba->vs);
+    print("\n");
 
     ahci_detect_drives();
     
@@ -251,7 +408,41 @@ void ahci_init() {
         print(" drives found\n");
     } else {
         print("AHCI: No drives found\n");
+
+        for (int i = 0; i < 32; i++) {
+            if (hba->pi & (1 << i)) {
+                hba_port_t* port = &hba->ports[i];
+                print("Port ");
+                print_hex(i);
+                print(" status: ");
+                print_hex(port->ssts);
+                print(" (DET=");
+                print_hex(port->ssts & 0xF);
+                print(", IPM=");
+                print_hex((port->ssts >> 8) & 0xF);
+                print(")\n");
+                
+                print("Port ");
+                print_hex(i);
+                print(" signature: ");
+                print_hex(port->sig);
+                print("\n");
+            }
+        }
     }
+}
+
+int is_fs_supported(uint32_t lba) {
+    uint8_t buffer[512];
+    if (!ahci_read_sectors(lba, 1, buffer)) {
+        return 0;
+    }
+
+    if (memcmp(buffer, "\x4C\x57\x53\x4F\x01\x00\x00\x00", 8) == 0) {
+        return 1;
+    }
+
+    return 0;
 }
 
 uint32_t find_fs_partition() {
