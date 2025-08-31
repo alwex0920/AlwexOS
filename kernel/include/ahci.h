@@ -146,5 +146,6 @@ int ahci_read_sectors(uint64_t lba, uint32_t count, void* buffer);
 int ahci_write_sectors(uint64_t lba, uint32_t count, void* buffer);
 void ahci_detect_drives();
 uint32_t find_fs_partition();
+int is_fs_supported(uint32_t lba);
 
 #endif
