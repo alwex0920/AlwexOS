@@ -18,10 +18,30 @@ void kmain(boot_info_t* boot_info) {
     mm_init(heap_start, heap_size);
     ahci_init();
     uint32_t fs_lba = find_fs_partition();
+    
     if (fs_lba == 0) {
-        print("Error: No filesystem partition found\n");
-        fs_init_ramdisk();
+        print("No filesystem partition found. Trying to use first available sector...\n");
+        
+        fs_lba = 1;
+
+        uint8_t test_buffer[512] = {0};
+        if (ahci_write_sectors(fs_lba, 1, test_buffer)) {
+            print("Disk is writable. Formatting...\n");
+            if (format_disk(fs_lba)) {
+                print("Disk formatted successfully.\n");
+                fs_init(fs_lba);
+            } else {
+                print("Formatting failed. Using ramdisk.\n");
+                fs_init_ramdisk();
+            }
+        } else {
+            print("Disk not writable. Using ramdisk.\n");
+            fs_init_ramdisk();
+        }
     } else {
+        print("Filesystem found at LBA: ");
+        print_hex(fs_lba);
+        print("\n");
         fs_init(fs_lba);
     }    
     shell_main();
