@@ -36,6 +36,7 @@ void fs_init(uint32_t lba);
 void fs_init_ramdisk(void);
 void fs_save(void);
 void fs_load(void);
+int format_disk(uint32_t lba);
 void print_tree(fs_node* node, int depth);
 void fs_tree(void);
 int create_file(const char* name);
