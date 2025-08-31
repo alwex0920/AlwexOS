@@ -472,6 +472,44 @@ int delete_dir(const char* name) {
     return -1;
 }
 
+int format_disk(uint32_t lba) {
+    uint8_t buffer[512] = {0};
+
+    superblock_t* sb = (superblock_t*)buffer;
+    sb->magic = FS_MAGIC;
+    sb->block_size = 512;
+    sb->total_blocks = 65536;
+    sb->free_blocks = sb->total_blocks - 1;
+
+    memcpy(buffer, "\x4C\x57\x53\x4F\x01\x00\x00\x00", 8);
+
+    if (!write_sectors(lba, 1, buffer)) {
+        print("Error: Failed to write superblock\n");
+        return 1;
+    }
+
+    node_count = 0;
+    memset(node_pool, 0, sizeof(node_pool));
+    
+    strlcpy(fs_root.name, "/", sizeof(fs_root.name));
+    fs_root.type = FS_DIR_TYPE;
+    fs_root.parent = NULL;
+    fs_root.child_count = 0;
+    fs_root.size = 0;
+    
+    for (int i = 0; i < MAX_CHILDREN; i++) {
+        fs_root.children[i] = NULL;
+    }
+    
+    current_dir = &fs_root;
+    node_count = 1;
+    strlcpy(current_path, "/", sizeof(current_path));
+
+    fs_save();
+    
+    return 0;
+}
+
 void list_files() {
     if (current_dir->child_count == 0) {
         print("The catalog is empty\n");
