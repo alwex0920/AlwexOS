@@ -11,6 +11,7 @@
 - **Built-in Language**: AlwexScript for system programming
 - **Lightweight**: Minimal dependencies, maximum performance
 - **File System**: This OS first tries to find the disk using AHCI, if it does not find it, it initializes the file system in RAM.
+- **M.2**: M.2 SSD support is being developed
 
 ## 💡 Why This Approach Rocks
 ## For Students:
