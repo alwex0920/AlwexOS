@@ -118,23 +118,32 @@ static int check_port_type(hba_port_t* port) {
 
 static void port_reset(int port_num) {
     hba_port_t* port = &hba->ports[port_num];
-
-    uint32_t orig_cmd = port->cmd;
-    uint32_t orig_sctl = port->sctl;
-
-    port->cmd = 0;
-    while (port->cmd & 0x8000);
-
-    port->sctl = 0x01;
-    msleep(500);
     
-    port->sctl = 0x00;
-    msleep(500);
+    print("Resetting port ");
+    print_hex(port_num);
+    print("\n");
 
-    port->cmd = orig_cmd;
-    port->sctl = orig_sctl;
-
+    port->cmd &= ~0x01;
     int timeout = 1000000;
+    while ((port->cmd & 0x4000) && timeout-- > 0) {
+        io_wait();
+    }
+    if (timeout <= 0) {
+        print("Warning: Port stop timeout\n");
+    }
+
+    port->ie = 0;
+
+    port->is = 0xFFFFFFFF;
+
+    uint32_t sctl = port->sctl;
+    port->sctl = (sctl & ~0xF) | 0x01;
+    msleep(1000);
+    
+    port->sctl = sctl & ~0xF;
+    msleep(1000);
+
+    timeout = 5000000;
     while (timeout-- > 0) {
         uint32_t ssts = port->ssts;
         uint8_t det = ssts & 0xF;
@@ -143,13 +152,19 @@ static void port_reset(int port_num) {
         if (det == 3 && ipm == 1) {
             print("Port ");
             print_hex(port_num);
-            print(" ready\n");
+            print(" ready: DET=3, IPM=1\n");
             return;
         }
         io_wait();
     }
     
-    print("Port reset timeout\n");
+    print("Port reset timeout: SSTS=");
+    print_hex(port->ssts);
+    print(" (DET=");
+    print_hex(port->ssts & 0xF);
+    print(", IPM=");
+    print_hex((port->ssts >> 8) & 0xF);
+    print(")\n");
 }
 
 static void port_init(int port_num) {
@@ -162,8 +177,8 @@ static void port_init(int port_num) {
     while (port->cmd & (1 << 15) || port->cmd & (1 << 14));
 
     void* clb_ptr = kmalloc_aligned(1024, 1024);
-    port->clb = (uint32_t)(uintptr_t)clb_ptr;
-    port->clbu = (uint32_t)((uint64_t)clb_ptr >> 32);
+    port->clb = (uint64_t)(uintptr_t)clb_ptr;
+    port->clbu = (uint64_t)(uintptr_t)clb_ptr >> 32;
     memset(clb_ptr, 0, 1024);
 
     void* fb_ptr = kmalloc_aligned(256, 256);
@@ -182,6 +197,238 @@ static void port_init(int port_num) {
     port->cmd |= (1 << 4);
 
     port->cmd |= 0x01;
+}
+
+static int is_m2_port(int port_num) {
+    hba_port_t* port = &hba->ports[port_num];
+    
+    print("Checking if port ");
+    print_hex(port_num);
+    print(" is M.2...\n");
+
+    uint32_t sstatus = port->ssts;
+    uint8_t det = sstatus & 0xF;
+    uint8_t ipm = (sstatus >> 8) & 0xF;
+    uint8_t spd = (sstatus >> 4) & 0xF;
+    
+    print("Port ");
+    print_hex(port_num);
+    print(" SStatus: ");
+    print_hex(sstatus);
+    print(" (DET=");
+    print_hex(det);
+    print(", IPM=");
+    print_hex(ipm);
+    print(", SPD=");
+    print_hex(spd);
+    print(")\n");
+
+    if (spd >= 3) {
+        print("Port ");
+        print_hex(port_num);
+        print(" identified as potential M.2 (high speed SPD=");
+        print_hex(spd);
+        print(")\n");
+        return 0;
+    }
+
+    if (port_num >= 4 && port_num <= 6) {
+        print("Port ");
+        print_hex(port_num);
+        print(" identified as potential M.2 (port number in range 4-6)\n");
+        return 0;
+    }
+
+    if (port->sig != 0xFFFFFFFF && port->sig != 0) {
+        print("Port ");
+        print_hex(port_num);
+        print(" has signature: ");
+        print_hex(port->sig);
+        print("\n");
+        return 0;
+    }
+    
+    print("Port ");
+    print_hex(port_num);
+    print(" does not appear to be M.2\n");
+    return 1;
+}
+
+static void init_m2_port(int port_num) {
+    hba_port_t* port = &hba->ports[port_num];
+    
+    print("Initializing M.2 port ");
+    print_hex(port_num);
+    print("\n");
+
+    port->cmd &= ~0x01;  // Clear FRE
+    int timeout = 1000000;
+    while ((port->cmd & 0x4000) && timeout-- > 0) {
+        io_wait();
+    }
+
+    port->ie = 0;
+    port->is = 0xFFFFFFFF;
+
+    uint32_t sctl = port->sctl;
+    port->sctl = (sctl & ~0xF) | 0x01;
+    msleep(5000);
+    
+    port->sctl = sctl & ~0xF;
+    msleep(5000);
+    
+    port->cmd |= 0x01;
+
+    timeout = 10000000;
+    while (timeout-- > 0) {
+        uint32_t ssts = port->ssts;
+        uint8_t det = ssts & 0xF;
+        uint8_t ipm = (ssts >> 8) & 0xF;
+        
+        if (det == 3 && ipm == 1) {
+            print("M.2 port ");
+            print_hex(port_num);
+            print(" ready\n");
+            return;
+        }
+        io_wait();
+    }
+    
+    print("M.2 port initialization timeout\n");
+}
+
+void check_controller_capabilities() {
+    if (!hba) return;
+    
+    print("Controller capabilities:\n");
+    print("CAP: ");
+    print_hex(hba->cap);
+    print("\n");
+
+    uint32_t cap = hba->cap;
+    print("64-bit addressing: ");
+    print((cap & (1 << 31)) ? "Yes\n" : "No\n");
+    
+    print("Native command queuing: ");
+    print((cap & (1 << 30)) ? "Yes\n" : "No\n");
+    
+    print("Staggered spin-up: ");
+    print((cap & (1 << 27)) ? "Yes\n" : "No\n");
+    
+    print("Mechanical presence switch: ");
+    print((cap & (1 << 26)) ? "Yes\n" : "No\n");
+    
+    print("Aggressive link power management: ");
+    print((cap & (1 << 25)) ? "Yes\n" : "No\n");
+    
+    print("Activity LED: ");
+    print((cap & (1 << 24)) ? "Yes\n" : "No\n");
+    
+    print("Command list override: ");
+    print((cap & (1 << 23)) ? "Yes\n" : "No\n");
+
+    if (hba->cap2) {
+        print("CAP2: ");
+        print_hex(hba->cap2);
+        print("\n");
+        
+        print("BOH: ");
+        print((hba->cap2 & (1 << 0)) ? "Yes\n" : "No\n");
+        print("NVMe: ");
+        print((hba->cap2 & (1 << 1)) ? "Yes\n" : "No\n");
+        print("APST: ");
+        print((hba->cap2 & (1 << 2)) ? "Yes\n" : "No\n");
+    }
+}
+
+void diagnose_m2_port(int port_num) {
+    hba_port_t* port = &hba->ports[port_num];
+    
+    print("=== M.2 Port ");
+    print_hex(port_num);
+    print(" Diagnosis ===\n");
+    
+    print("SSTS: ");
+    print_hex(port->ssts);
+    print(" (DET=");
+    print_hex(port->ssts & 0xF);
+    print(", IPM=");
+    print_hex((port->ssts >> 8) & 0xF);
+    print(")\n");
+    
+    print("SCTL: ");
+    print_hex(port->sctl);
+    print("\n");
+    
+    print("SERR: ");
+    print_hex(port->serr);
+    print("\n");
+    
+    print("SACT: ");
+    print_hex(port->sact);
+    print("\n");
+    
+    print("CI: ");
+    print_hex(port->ci);
+    print("\n");
+    
+    print("TFD: ");
+    print_hex(port->tfd);
+    print("\n");
+    
+    print("SIG: ");
+    print_hex(port->sig);
+    print("\n");
+
+    uint32_t sstatus = port->ssts;
+    print("SStatus: ");
+    print_hex(sstatus);
+    print(" (DET=");
+    print_hex(sstatus & 0xF);
+    print(", IPM=");
+    print_hex((sstatus >> 8) & 0xF);
+    print(", SPD=");
+    print_hex((sstatus >> 4) & 0xF);
+    print(")\n");
+    
+    if (port->serr != 0) {
+        print("Error detected: ");
+        print_hex(port->serr);
+        print("\n");
+    }
+}
+
+int is_port_ready(int port_num) {
+    hba_port_t* port = &hba->ports[ports[port_num]];
+
+    uint32_t ssts = port->ssts;
+    uint8_t det = ssts & 0xF;
+    uint8_t ipm = (ssts >> 8) & 0xF;
+    
+    if (det != 3 || ipm != 1) {
+        print("Port not ready: DET=");
+        print_hex(det);
+        print(", IPM=");
+        print_hex(ipm);
+        print("\n");
+        return 1;
+    }
+
+    if (!(port->cmd & 0x01)) {
+        print("Command engine not running\n");
+        return 1;
+    }
+
+    if (port->tfd & 0x01) {
+        print("Port has error: TFD=");
+        print_hex(port->tfd);
+        print(", SERR=");
+        print_hex(port->serr);
+        print("\n");
+        return 1;
+    }
+    
+    return 0;
 }
 
 static int find_cmd_slot(hba_port_t* port) {
@@ -207,8 +454,45 @@ static void wait_for_cmd(hba_port_t* port, int slot) {
     port->is = 0;
 }
 
+void test_disk_read() {
+    if (port_count == 0) {
+        print("No drives available for testing\n");
+        return;
+    }
+    
+    print("Testing disk read...\n");
+
+    uint8_t* buffer = (uint8_t*)kmalloc(512);
+    if (!buffer) {
+        print("Failed to allocate memory for test\n");
+        return;
+    }
+
+    if (ahci_read_sectors(0, 1, buffer)) {
+        print("Disk read test successful\n");
+
+        if (buffer[510] == 0x55 && buffer[511] == 0xAA) {
+            print("MBR signature found\n");
+        } else {
+            print("No MBR signature found\n");
+        }
+    } else {
+        print("Disk read test failed\n");
+    }
+    
+    kfree(buffer);
+}
+
 int ahci_read_sectors(uint64_t lba, uint32_t count, void* buffer) {
-    if (port_count == 0) return 0;
+    if (port_count == 0) {
+        print("No ports available\n");
+        return 1;
+    }
+
+    if (!is_port_ready(0)) {
+        print("Port not ready for reading\n");
+        return 1;
+    }
 
     hba_port_t* port = &hba->ports[ports[0]];
 
@@ -219,13 +503,13 @@ int ahci_read_sectors(uint64_t lba, uint32_t count, void* buffer) {
     
     if (timeout <= 0) {
         print("AHCI: Port busy timeout\n");
-        return 0;
+        return 1;
     }
 
     int slot = find_cmd_slot(port);
     if (slot == -1) {
         print("AHCI: No free command slots\n");
-        return 0;
+        return 1;
     }
 
     hba_cmd_header_t* cmd_header = (hba_cmd_header_t*)(uintptr_t)port->clb + slot;
@@ -259,18 +543,18 @@ int ahci_read_sectors(uint64_t lba, uint32_t count, void* buffer) {
 
     wait_for_cmd(port, slot);
     
-    return 1;
+    return 0;
 }
 
 int ahci_write_sectors(uint64_t lba, uint32_t count, void* buffer) {
-    if (port_count == 0) return 0;
+    if (port_count == 0) return 1;
 
     hba_port_t* port = &hba->ports[ports[0]];
 
     int slot = find_cmd_slot(port);
     if (slot == -1) {
         print("AHCI: No free command slots\n");
-        return 0;
+        return 1;
     }
 
     hba_cmd_header_t* cmd_header = (hba_cmd_header_t*)(uintptr_t)port->clb + slot;
@@ -304,7 +588,7 @@ int ahci_write_sectors(uint64_t lba, uint32_t count, void* buffer) {
 
     wait_for_cmd(port, slot);
     
-    return 1;
+    return 0;
 }
 
 void ahci_detect_drives() {
@@ -316,19 +600,51 @@ void ahci_detect_drives() {
     print("Checking implemented ports: ");
     print_hex(pi);
     print("\n");
-    
-    for (int i = 0; i < 32; i++) {
-        if (pi & (1 << i)) {
-            print("Checking port ");
-            print_hex(i);
-            print("\n");
 
+    for (int i = 0; i < 32; i++) {
+        if ((pi & (1 << i)) && is_m2_port(i)) {
+            print("\nM.2 drive port found!");
+            print("\n=== Checking M.2 port ");
+            print_hex(i);
+            print(" ===\n");
+            
+            diagnose_m2_port(i);
+
+            init_m2_port(i);
+
+            uint32_t ssts = hba->ports[i].ssts;
+            uint8_t det = ssts & 0xF;
+            uint8_t ipm = (ssts >> 8) & 0xF;
+            
+            if (det == 3 && ipm == 1) {
+                ports[port_count++] = i;
+                print("M.2 drive found at port ");
+                print_hex(i);
+                print("\n");
+                port_init(i);
+            } else {
+                print("No M.2 drive found at port ");
+                print_hex(i);
+                print("\n");
+            }
+        }
+    }
+
+    for (int i = 0; i < 32; i++) {
+        if ((pi & (1 << i)) && !is_m2_port(i)) {
+            print("\nM.2 drive port not found!");
+            print("\n=== Checking SATA port ");
+            print_hex(i);
+            print(" ===\n");
+            
+            hba_port_t* port = &hba->ports[i];
+            
             port_reset(i);
             
-            int type = check_port_type(&hba->ports[i]);
+            int type = check_port_type(port);
             if (type > 0) {
                 ports[port_count++] = i;
-                print("AHCI: Found drive at port ");
+                print("SATA drive found at port ");
                 print_hex(i);
                 print(" type: ");
                 if (type == 1) print("SATA");
@@ -337,9 +653,41 @@ void ahci_detect_drives() {
                 print("\n");
 
                 port_init(i);
+            } else {
+                print("No SATA drive found at port ");
+                print_hex(i);
+                print("\n");
             }
         }
     }
+}
+
+int try_alternative_port_init(int port_num) {
+    hba_port_t* port = &hba->ports[port_num];
+    
+    print("Trying alternative port initialization for port ");
+    print_hex(port_num);
+    print("\n");
+
+    port->cmd &= ~0x01;
+    port->cmd &= ~0x02;
+    while (port->cmd & 0x4000);
+
+    port->serr = 0xFFFFFFFF;
+
+    msleep(5000);
+
+    port->cmd |= 0x01;
+
+    int timeout = 1000000;
+    while (timeout-- > 0) {
+        if (port->ssts != 0) {
+            print("Port became responsive after alternative init\n");
+            return 0;
+        }
+        io_wait();
+    }
+    return 1;
 }
 
 int ahci_check_drive_ready(int port_num) {
@@ -364,17 +712,41 @@ void ahci_init() {
     print("AHCI: Controller found at ABAR=");
     print_hex(abar);
     print("\n");
-
-    hba = (hba_mem_t*)(uintptr_t)abar;
+    print("AHCI Controller Details:\n");
 
     uint32_t cap = hba->cap;
+    print("Supports 64-bit addressing: "); print((cap & (1 << 31)) ? "Yes\n" : "No\n");
+    print("Number of command slots: "); print_hex(((cap >> 8) & 0x1F) + 1); print("\n");
+    print("Supports native command queuing: "); print((cap & (1 << 30)) ? "Yes\n" : "No\n");
+    print("Supports staggered spin-up: "); print((cap & (1 << 27)) ? "Yes\n" : "No\n");
+
+    hba = (hba_mem_t*)(uintptr_t)abar;
+    
+    if (hba->cap == 0 || hba->cap == 0xFFFFFFFF) {
+        print("Error: Cannot read AHCI registers\n");
+        return;
+    }
+
+    uint32_t test_value = 0x12345678;
+    hba->ghc = test_value;
+    
+    if (hba->ghc != test_value) {
+        print("Error: Cannot write to AHCI registers\n");
+        print("Expected: ");
+        print_hex(test_value);
+        print(", Got: ");
+        print_hex(hba->ghc);
+        print("\n");
+        return;
+    }
+
     print("CAP: ");
-    print_hex(cap);
+    print_hex(hba->cap);
     print("\n");
 
     hba->ghc |= (1 << 31);
 
-    int timeout = 1000000;
+    int timeout = 5000000;
     while (!(hba->ghc & (1 << 31)) && timeout-- > 0) {
         io_wait();
     }
@@ -396,39 +768,15 @@ void ahci_init() {
     print_hex(hba->pi);
     print("\n");
 
-    print("Version: ");
-    print_hex(hba->vs);
-    print("\n");
-
     ahci_detect_drives();
     
     if (port_count > 0) {
         print("AHCI: Initialization completed with ");
         print_hex(port_count);
         print(" drives found\n");
+        test_disk_read();
     } else {
         print("AHCI: No drives found\n");
-
-        for (int i = 0; i < 32; i++) {
-            if (hba->pi & (1 << i)) {
-                hba_port_t* port = &hba->ports[i];
-                print("Port ");
-                print_hex(i);
-                print(" status: ");
-                print_hex(port->ssts);
-                print(" (DET=");
-                print_hex(port->ssts & 0xF);
-                print(", IPM=");
-                print_hex((port->ssts >> 8) & 0xF);
-                print(")\n");
-                
-                print("Port ");
-                print_hex(i);
-                print(" signature: ");
-                print_hex(port->sig);
-                print("\n");
-            }
-        }
     }
 }
 
