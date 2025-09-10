@@ -472,6 +472,24 @@ void print_hex(uint32_t n) {
     print(buf);
 }
 
+int snprintf(char *buf, int buf_size, const char *fmt, const char *a, const char *b) {
+    int pos = 0;
+    for (int i = 0; fmt[i] != '\0' && pos < buf_size - 1; i++) {
+        if (fmt[i] == '%' && fmt[i+1] == 's') {
+            const char *str = (pos == 0 ? a : b);
+            if (!str) str = "(null)";
+            for (int j = 0; str[j] && pos < buf_size - 1; j++) {
+                buf[pos++] = str[j];
+            }
+            i++;
+        } else {
+            buf[pos++] = fmt[i];
+        }
+    }
+    buf[pos] = '\0';
+    return pos;
+}
+
 int putchar(int c) {
     echo((char)c);
     return c;
