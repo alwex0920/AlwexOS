@@ -2,8 +2,9 @@
 #include "include/lib.h"
 #include "include/keyboard.h"
 #include "include/editor.h"
-#include "include/ata.h"
+#include "include/ahci.h"
 #include "include/run.h"
+#include "include/ai.h"
 
 void shell_main() {
     char input[64];
@@ -118,6 +119,9 @@ void shell_main() {
         }
         else if (strcmp(input, "tree") == 0) {
             fs_tree();
+        }
+        else if (strncmp(input, "ai ", 3) == 0) {
+            ai_handle(input + 3);
         }
         else {
             print("Unknown team. Enter 'help' for help.\n");
