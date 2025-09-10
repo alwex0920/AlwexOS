@@ -201,19 +201,16 @@ static void port_init(int port_num) {
 
 static int is_m2_port(int port_num) {
     hba_port_t* port = &hba->ports[port_num];
-    
-    print("Checking if port ");
-    print_hex(port_num);
-    print(" is M.2...\n");
 
     uint32_t sstatus = port->ssts;
     uint8_t det = sstatus & 0xF;
     uint8_t ipm = (sstatus >> 8) & 0xF;
     uint8_t spd = (sstatus >> 4) & 0xF;
     
-    print("Port ");
+    print("Checking port ");
     print_hex(port_num);
-    print(" SStatus: ");
+    print(" for M.2 characteristics:\n");
+    print("  SStatus: ");
     print_hex(sstatus);
     print(" (DET=");
     print_hex(det);
@@ -224,33 +221,37 @@ static int is_m2_port(int port_num) {
     print(")\n");
 
     if (spd >= 3) {
-        print("Port ");
-        print_hex(port_num);
-        print(" identified as potential M.2 (high speed SPD=");
+        print("  High speed detected (SPD=");
         print_hex(spd);
-        print(")\n");
+        print("), likely M.2\n");
+        return 0;
+    }
+
+    print("  Signature: ");
+    print_hex(port->sig);
+    print("\n");
+
+    if (port->sig == 0xEB140101 || port->sig == 0x00000101) {
+        print("  Known M.2 signature detected\n");
+        return 0;
+    }
+
+    uint32_t sctl = port->sctl;
+    print("  SControl: ");
+    print_hex(sctl);
+    print("\n");
+
+    if ((sctl & 0xF) == 0x1) {
+        print("  M.2-like SControl configuration detected\n");
         return 0;
     }
 
     if (port_num >= 4 && port_num <= 6) {
-        print("Port ");
-        print_hex(port_num);
-        print(" identified as potential M.2 (port number in range 4-6)\n");
-        return 0;
-    }
-
-    if (port->sig != 0xFFFFFFFF && port->sig != 0) {
-        print("Port ");
-        print_hex(port_num);
-        print(" has signature: ");
-        print_hex(port->sig);
-        print("\n");
+        print("  Port number in typical M.2 range (4-6)\n");
         return 0;
     }
     
-    print("Port ");
-    print_hex(port_num);
-    print(" does not appear to be M.2\n");
+    print("  Port does not appear to be M.2\n");
     return 1;
 }
 
@@ -512,7 +513,7 @@ int ahci_read_sectors(uint64_t lba, uint32_t count, void* buffer) {
         return 1;
     }
 
-    hba_cmd_header_t* cmd_header = (hba_cmd_header_t*)(uintptr_t)port->clb + slot;
+    hba_cmd_header_t* cmd_header = ((hba_cmd_header_t*)(uintptr_t)port->clb) + slot;
     hba_cmd_table_t* cmd_table = (hba_cmd_table_t*)(uintptr_t)cmd_header->ctba;
 
     cmd_header->cfl = sizeof(fis_h2d_t) / sizeof(uint32_t);
@@ -557,7 +558,7 @@ int ahci_write_sectors(uint64_t lba, uint32_t count, void* buffer) {
         return 1;
     }
 
-    hba_cmd_header_t* cmd_header = (hba_cmd_header_t*)(uintptr_t)port->clb + slot;
+    hba_cmd_header_t* cmd_header = ((hba_cmd_header_t*)(uintptr_t)port->clb) + slot;
     hba_cmd_table_t* cmd_table = (hba_cmd_table_t*)(uintptr_t)cmd_header->ctba;
 
     cmd_header->cfl = sizeof(fis_h2d_t) / sizeof(uint32_t);
@@ -715,13 +716,14 @@ void ahci_init() {
     print("AHCI Controller Details:\n");
 
     uint32_t cap = hba->cap;
+
     print("Supports 64-bit addressing: "); print((cap & (1 << 31)) ? "Yes\n" : "No\n");
     print("Number of command slots: "); print_hex(((cap >> 8) & 0x1F) + 1); print("\n");
     print("Supports native command queuing: "); print((cap & (1 << 30)) ? "Yes\n" : "No\n");
     print("Supports staggered spin-up: "); print((cap & (1 << 27)) ? "Yes\n" : "No\n");
-
-    hba = (hba_mem_t*)(uintptr_t)abar;
     
+    hba = (hba_mem_t*)(uintptr_t)abar;
+
     if (hba->cap == 0 || hba->cap == 0xFFFFFFFF) {
         print("Error: Cannot read AHCI registers\n");
         return;
