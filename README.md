@@ -10,9 +10,10 @@
 - **Educational Focus**: Perfect for learning low-level programming
 - **Built-in Language**: AlwexScript for system programming
 - **Lightweight**: Minimal dependencies, maximum performance
-- **File System**: This OS first tries to find the disk using AHCI, if it does not find it, it initializes the file system in RAM.
+- **File System**: This OS first tries to find the disk using AHCI, if it does not find it, it initializes the file system in RAM
 - **M.2**: M.2 SSD support is being developed
 - **Disk**: To use it, you need the first drive (with OS) and the second drive (for data)
+- **AI**: A simple AI
 
 ## 💡 Why This Approach Rocks
 ## For Students:
