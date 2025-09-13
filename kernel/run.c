@@ -2,6 +2,7 @@
 #include "include/lib.h"
 #include "include/run.h"
 #include "include/stddef.h"
+#include "include/ai.h"
 
 double eval_expression(const char* expr);
 int eval_condition(const char* cond);
@@ -282,8 +283,158 @@ int eval_condition(const char* cond) {
     return 0;
 }
 
+int system_command(const char *command) {
+    if (strcmp(command, "clr") == 0) {
+        clear_screen();
+        return 0;
+    } else if (strcmp(command, "poweroff") == 0) {
+        poweroff();
+    }
+    else if (strcmp(command, "reboot") == 0) {
+        reboot();
+    }
+    else if (strncmp(command, "create-file ", 12) == 0) {
+        const char* name = command + 12;
+        if (create_file(name)) {
+            print("File creation error\n");
+        } else {
+            print("The file has been created\n");
+        }
+    }
+    else if (strncmp(command, "delete-file ", 12) == 0) {
+        const char* name = command + 12;
+        if (delete_file(name)) {
+            print("File deletion error\n");
+        } else {
+            print("The file has been deleted\n");
+        }
+    }
+    else if (strncmp(command, "create-dir ", 11) == 0) {
+        const char* name = command + 11;
+        if (create_dir(name)) {
+            print("Directory creation error\n");
+        } else {
+            print("The directory has been created\n");
+        }
+    }
+    else if (strncmp(command, "delete-dir ", 11) == 0) {
+        const char* name = command + 11;
+        if (delete_dir(name)) {
+            print("Error deleting a directory\n");
+        } else {
+            print("The directory has been deleted\n");
+        }
+    }
+    else if (strncmp(command, "cd ", 3) == 0) {
+        const char *path = command + 3;
+        if (chdir(path) != 0) {
+            print("Directory not found: ");
+            print(path);
+            print("\n");
+        }
+    } 
+    else if (strcmp(command, "cd") == 0) {
+        chdir("/");
+    }
+    else if (strncmp(command, "run ", 4) == 0) {
+        const char* filename = command + 4;
+        run_program(filename);
+    }
+    else if (strcmp(command, "list") == 0) {
+        list_files();
+    }
+    else if (strcmp(command, "tree") == 0) {
+        fs_tree();
+    }
+    else if (strncmp(command, "ai ", 3) == 0) {
+        ai_handle(command + 3);
+    }
+    else {
+        print("Unknown command: ");
+        print(command);
+        print("\n");
+        return -1;
+    }
+}
+
+int file_operations(const char *operation, const char *filename, const char *content) {
+    if (strcmp(operation, "write") == 0) {
+        int result = fs_write(filename, content, strlen(content));
+        if (result < 0) {
+            print("Error writing to file: ");
+            print(filename);
+            print("\n");
+            return -1;
+        }
+        print("File written: ");
+        print(filename);
+        print("\n");
+        return 0;
+    } else if (strcmp(operation, "read") == 0) {
+        char buffer[256];
+        int size = fs_read(filename, buffer, sizeof(buffer)-1);
+        if (size < 0) {
+            print("Error reading file: ");
+            print(filename);
+            print("\n");
+            return -1;
+        }
+        buffer[size] = '\0';
+        print(buffer);
+        print("\n");
+        return 0;
+    } else if (strcmp(operation, "append") == 0) {
+        char old_content[512];
+        int old_size = fs_read(filename, old_content, sizeof(old_content)-1);
+        if (old_size < 0) {
+            old_size = 0;
+            old_content[0] = '\0';
+        } else {
+            old_content[old_size] = '\0';
+        }
+
+        if (old_size + strlen(content) >= sizeof(old_content)) {
+            print("Error: file too big to append\n");
+            return -1;
+        }
+
+        strcat(old_content, content);
+
+        int result = fs_write(filename, old_content, strlen(old_content));
+        if (result < 0) {
+            print("Error appending to file: ");
+            print(filename);
+            print("\n");
+            return -1;
+        }
+        print("Content appended to: ");
+        print(filename);
+        print("\n");
+        return 0;
+    } else if (strcmp(operation, "exists") == 0) {
+        char buffer[1];
+        int size = fs_read(filename, buffer, 1);
+        if (size < 0) {
+            print("File does not exist: ");
+            print(filename);
+            print("\n");
+            return 0;
+        } else {
+            print("File exists: ");
+            print(filename);
+            print("\n");
+            return 1;
+        }
+    }
+    
+    print("Unknown file operation: ");
+    print(operation);
+    print("\n");
+    return -1;
+}
+
 void execute(const char* code) {
-    char line[64];
+    char line[256];
     const char* p = code;
 
     var_count = 0;
@@ -386,6 +537,101 @@ void execute(const char* code) {
         }
         else if (strncmp(token, "end", 3) == 0) {
             condition_met = 0;
+            continue;
+        }
+
+        else if (strncmp(token, "exec ", 5) == 0) {
+            char* command = token + 5;
+            while (my_isspace(*command)) command++;
+            system_command(command);
+            continue;
+        }
+
+        else if (strncmp(token, "file_write ", 11) == 0) {
+            char* args = token + 11;
+            while (my_isspace(*args)) args++;
+
+            char filename[50];
+            char content[256];
+
+            char* space = strchr(args, ' ');
+            if (space == NULL) {
+                print("Error: file_write requires filename and content\n");
+                continue;
+            }
+
+            int filename_len = space - args;
+            if (filename_len >= (int)sizeof(filename)) filename_len = sizeof(filename) - 1;
+            memcpy(filename, args, filename_len);
+            filename[filename_len] = '\0';
+
+            char* content_start = space + 1;
+            while (my_isspace(*content_start)) content_start++;
+
+            if (*content_start == '\'') {
+                char* end_quote = strchr(content_start + 1, '\'');
+                if (end_quote) {
+                    *end_quote = '\0';
+                    strlcpy(content, content_start + 1, sizeof(content));
+                } else {
+                    print("Error: unclosed string in file_write\n");
+                    continue;
+                }
+            } else {
+                strlcpy(content, content_start, sizeof(content));
+            }
+            
+            file_operations("write", filename, content);
+            continue;
+        }
+        else if (strncmp(token, "file_read ", 10) == 0) {
+            char* filename = token + 10;
+            while (my_isspace(*filename)) filename++;
+            file_operations("read", filename, NULL);
+            continue;
+        }
+        else if (strncmp(token, "file_append ", 12) == 0) {
+            char* args = token + 12;
+            while (my_isspace(*args)) args++;
+
+            char filename[50];
+            char content[256];
+
+            char* space = strchr(args, ' ');
+            if (space == NULL) {
+                print("Error: file_append requires filename and content\n");
+                continue;
+            }
+
+            int filename_len = space - args;
+            if (filename_len >= (int)sizeof(filename)) filename_len = sizeof(filename) - 1;
+            memcpy(filename, args, filename_len);
+            filename[filename_len] = '\0';
+
+            char* content_start = space + 1;
+            while (my_isspace(*content_start)) content_start++;
+
+            if (*content_start == '\'') {
+                char* end_quote = strchr(content_start + 1, '\'');
+                if (end_quote) {
+                    *end_quote = '\0';
+                    strlcpy(content, content_start + 1, sizeof(content));
+                } else {
+                    print("Error: unclosed string in file_append\n");
+                    continue;
+                }
+            } else {
+                strlcpy(content, content_start, sizeof(content));
+            }
+            
+            file_operations("append", filename, content);
+            continue;
+        }
+
+        else if (strncmp(token, "file_exists ", 12) == 0) {
+            char* filename = token + 12;
+            while (my_isspace(*filename)) filename++;
+            file_operations("exists", filename, NULL);
             continue;
         }
 
