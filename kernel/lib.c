@@ -839,6 +839,34 @@ int atoi(const char* str) {
     return sign * res;
 }
 
+double pow(double base, int exp) {
+    double result = 1.0;
+    for (int i = 0; i < exp; i++) result *= base;
+    return result;
+}
+
+double fact(int n) {
+    double r = 1.0;
+    for (int i = 2; i <= n; i++) r *= i;
+    return r;
+}
+
+double exp(double x) {
+    double sum = 1.0;
+    double term = 1.0;
+    for (int n = 1; n < 20; n++) {
+        term *= x / n;
+        sum += term;
+    }
+    return sum;
+}
+
+double tanh(double x) {
+    double ex = exp(x);
+    double enx = exp(-x);
+    return (ex - enx) / (ex + enx);
+}
+
 size_t strlcat(char *dst, const char *src, size_t size) {
     size_t dst_len = strlen(dst);
     size_t src_len = strlen(src);
