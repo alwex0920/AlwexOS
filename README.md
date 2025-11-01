@@ -14,6 +14,7 @@
 - **M.2**: M.2 SSD support is being developed
 - **Disk**: To use it, you need the first drive (with OS) and the second drive (for data)
 - **AI**: A simple AI
+- **Keyboard**: PS/2 is running and USB support is being developed
 
 ## 💡 Why This Approach Rocks
 ## For Students:
